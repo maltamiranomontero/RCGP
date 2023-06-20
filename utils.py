@@ -35,7 +35,7 @@ def add_noise_cov(K: tf.Tensor, M: tf.Tensor, likelihood_variance: TensorType) -
     Returns K + σ², where σ² is the diagonal likelihood noise variance.
     """
     k_diag = tf.linalg.diag_part(K)
-    return tf.linalg.set_diag(K, k_diag + (likelihood_variance**2)*M**-2/2)
+    return tf.linalg.set_diag(K, k_diag + likelihood_variance*(M**-2))
 
 
 @check_shapes(

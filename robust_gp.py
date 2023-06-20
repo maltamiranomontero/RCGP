@@ -2,6 +2,7 @@
 from typing import Optional
 
 import tensorflow as tf
+import numpy as np
 from check_shapes import check_shapes, inherit_check_shapes
 
 import gpflow
@@ -15,11 +16,12 @@ from gpflow.mean_functions import MeanFunction
 from gpflow.models.model import GPModel
 from gpflow.models.training_mixins import InternalDataTrainingLossMixin
 from gpflow.models.util import data_input_to_tensor
+from gpflow.config import default_float, default_jitter
 
 from utils import add_likelihood_noise_cov
 
 
-class DSM_GPR(GPModel):
+class DSM_GPR(GPModel,InternalDataTrainingLossMixin ):
     r"""
     Gaussian Process Regression.
 
@@ -87,14 +89,41 @@ class DSM_GPR(GPModel):
 
         """
         X, Y = self.data
+        n = tf.shape(X)[0]
         K = self.kernel(X)
-        ks = add_likelihood_noise_cov(K, self.likelihood, X)
-        L = tf.linalg.cholesky(ks)
-        m = self.mean_function(X)
+        M = self.diffusion_matrix.M(X, Y)
+        M_dy = self.diffusion_matrix.dy(X, Y)
+        
+        
 
-        # [R,] log-likelihoods for each independent dimension of Y
-        log_prob = multivariate_normal(Y, m, L)
-        return tf.reduce_sum(log_prob)
+        K_plus_sM = add_likelihood_noise_cov(K, M, self.likelihood, X)
+        L_plus_sM = tf.linalg.cholesky(K_plus_sM + tf.eye(n, dtype=default_float()) * 1e-04)
+
+
+        nu = (self.likelihood.variance_at(X)**-1)*Y*(M**-2)-2*M*M_dy
+        print(nu)
+
+        A = tf.linalg.triangular_solve(L_plus_sM, tf.transpose(tf.linalg.matmul(nu, K, transpose_a=True)), lower=False)
+        B = tf.linalg.triangular_solve(L_plus_sM, nu*(M**-2)*self.likelihood.variance_at(X), lower=False)
+
+        C1 = tf.matmul(Y,Y*(M**-2)*self.likelihood.variance_at(X), transpose_a=True)/2
+        C2 = - tf.matmul(Y,2*M*M_dy, transpose_a=True)
+        C3 = - 2*tf.matmul(M,M, transpose_a=True)
+
+        C = tf.reduce_sum(C1+C2+C3)
+
+        print(C)
+
+        D1 = tf.reduce_sum(tf.math.log(tf.linalg.diag_part(L_plus_sM)))
+        D2 =  tf.reduce_sum(tf.math.log((M**2)*self.likelihood.variance_at(X)**-1))/2
+
+        D = tf.reduce_sum(D1+D2) 
+
+        print(D)
+
+        print(tf.reduce_sum(tf.linalg.matmul(A, B, transpose_a=True))/2)
+
+        return tf.reduce_sum(tf.linalg.matmul(A, B, transpose_a=True))/2 - C - D
 
     @inherit_check_shapes
     def predict_f(
@@ -116,7 +145,6 @@ class DSM_GPR(GPModel):
 
         M = self.diffusion_matrix.M(X, err)
         M_dy = self.diffusion_matrix.dy(X, err)
-        M_dylog2 = self.diffusion_matrix.dylog2(X, err)
 
         likelihood_variance = self.likelihood.variance_at(X)
 

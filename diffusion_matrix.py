@@ -22,10 +22,8 @@ class Diffusion_matrix(ABC):
         return tape.gradient(M, y)
 
 class Shrinkage_Diffusion_matrix(Diffusion_matrix):
-    def __init__(self, variance = 1) -> None:
-        self.variance = variance
 
     def M(self, X: TensorType, y: TensorType) -> tf.Tensor:
-        return tf.math.sqrt(self.variance/(2*(1+y**2)))
+        return tf.math.sqrt(1/(1+y**2))
     
     
