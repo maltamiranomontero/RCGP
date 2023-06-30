@@ -26,4 +26,10 @@ class Shrinkage_Diffusion_matrix(Diffusion_matrix):
     def M(self, X: TensorType, y: TensorType) -> tf.Tensor:
         return tf.math.sqrt(1/(1+y**2))
     
+class Identity_Diffusion_matrix(Diffusion_matrix):
     
+    def M(self, X, y):
+        return tf.ones_like(y)
+    
+    def dy(self, X: TensorType, y: TensorType) -> tf.Tensor:
+        return tf.zeros_like(y) 

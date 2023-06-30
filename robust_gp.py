@@ -18,11 +18,12 @@ from gpflow.models.model import GPModel
 from gpflow.models.training_mixins import InternalDataTrainingLossMixin
 from gpflow.models.util import data_input_to_tensor, inducingpoint_wrapper, InducingPointsLike
 from gpflow.config import default_float, default_jitter
+from gpflow.utilities import to_default_float
 
 from utils import add_likelihood_noise_cov
 
 
-class DSM_GPR(GPModel,InternalDataTrainingLossMixin ):
+class DSM_GPR(GPModel, InternalDataTrainingLossMixin):
     r"""
     Gaussian Process Regression.
 
@@ -95,34 +96,24 @@ class DSM_GPR(GPModel,InternalDataTrainingLossMixin ):
         M = self.diffusion_matrix.M(X, Y)
         M_dy = self.diffusion_matrix.dy(X, Y)
         
-        
-
         K_plus_sM = add_likelihood_noise_cov(K, M, self.likelihood, X)
         L_plus_sM = tf.linalg.cholesky(K_plus_sM + tf.eye(n, dtype=default_float()) * 1e-04)
 
+        nu = (self.likelihood.variance_at(X)**-1)*Y*(M**2)-2*M*M_dy
 
-        nu = (self.likelihood.variance_at(X)**-1)*Y*(M**-2)-2*M*M_dy
-        #print(nu)
-
-        A = tf.linalg.triangular_solve(L_plus_sM, tf.transpose(tf.linalg.matmul(nu, K, transpose_a=True)), lower=False)
-        B = tf.linalg.triangular_solve(L_plus_sM, nu*(M**-2)*self.likelihood.variance_at(X), lower=False)
+        A = tf.linalg.triangular_solve(L_plus_sM, tf.transpose(tf.linalg.matmul(nu, K, transpose_a=True)), lower=True)
+        B = tf.linalg.triangular_solve(L_plus_sM, nu*(M**-2)*self.likelihood.variance_at(X), lower=True)
 
         C1 = tf.matmul(Y,Y*(M**2)*self.likelihood.variance_at(X)**-1, transpose_a=True)/2
         C2 = - tf.matmul(Y,2*M*M_dy, transpose_a=True)
-        C3 = - 2*tf.matmul(M,M, transpose_a=True)
+        C3 = - tf.matmul(M,M, transpose_a=True)
 
         C = tf.reduce_sum(C1+C2+C3)
 
-        #print(C)
-
         D1 = tf.reduce_sum(tf.math.log(tf.linalg.diag_part(L_plus_sM)))
-        D2 =  tf.reduce_sum(tf.math.log((M**2)*self.likelihood.variance_at(X)**-1))/2
+        D2 = tf.reduce_sum(tf.math.log((M**2)*self.likelihood.variance_at(X)**-1))/2
 
         D = tf.reduce_sum(D1+D2) 
-
-        #print(D)
-
-        #print(tf.reduce_sum(tf.linalg.matmul(A, B, transpose_a=True))/2)
 
         return tf.reduce_sum(tf.linalg.matmul(A, B, transpose_a=True))/2 - C - D
 
@@ -199,7 +190,7 @@ class DSM_GPR(GPModel,InternalDataTrainingLossMixin ):
         return f_mean, f_var
     
 
-class DSM_SGPR(GPModel):
+class DSM_SGPR(GPModel, InternalDataTrainingLossMixin):
     """
     Common base class for SGPR and GPRFITC that provides the common __init__
     and upper_bound() methods.
@@ -250,10 +241,69 @@ class DSM_SGPR(GPModel):
         self.inducing_variable: InducingPoints = inducingpoint_wrapper(inducing_variable)
         
         self.diffusion_matrix = diffusion_matrix
+    
+    @check_shapes(
+        "return: []",
+    )
+    def elbo(self) -> tf.Tensor:
+        """
+        Construct a tensorflow function to compute the bound on the marginal
+        likelihood.
+        """
+        X, Y = self.data
+        n = tf.shape(X)[0]
+        K = self.kernel(X)
+
+        M = self.diffusion_matrix.M(X, Y)
+        M_dy = self.diffusion_matrix.dy(X, Y)
+        diag_M = tf.linalg.diag(tf.squeeze(M, axis=-1))
+        
+        num_inducing = self.inducing_variable.num_inducing
+
+        sigma_sq = self.likelihood.variance_at(X)
+        sigma = tf.sqrt(sigma_sq)
+
+        kuf = Kuf(self.inducing_variable, self.kernel, X)
+        kuu = Kuu(self.inducing_variable, self.kernel, jitter=default_jitter())
+        L = tf.linalg.cholesky(kuu) 
+
+        Lkuf = tf.linalg.triangular_solve(L, kuf, lower=True)
+
+        nu = (sigma_sq**-1)*Y*(M**2)-2*M*M_dy
+
+        MKuf = tf.linalg.matmul(kuf,diag_M/sigma)
+
+        A = kuu + tf.linalg.matmul(MKuf,MKuf,transpose_b=True)
+
+        LA = tf.linalg.cholesky(A) 
+
+        kufnu = tf.linalg.matmul(kuf,nu)
+
+        tmp1 =tf.linalg.triangular_solve(LA, kufnu, lower=True)
+
+        quad = tf.reduce_sum(tf.matmul(tmp1, tmp1, transpose_a=True))/2
+
+        C1 = tf.matmul(Y,Y*(M**2)*self.likelihood.variance_at(X)**-1, transpose_a=True)/2
+        C2 = - tf.matmul(Y,2*M*M_dy, transpose_a=True)
+        C3 = - tf.matmul(M,M, transpose_a=True)
+ 
+        C = tf.reduce_sum(C1+C2+C3)
+
+        S = K - tf.matmul(Lkuf,Lkuf,transpose_a=True)
+        LSL = tf.linalg.matmul(diag_M/sigma,tf.linalg.matmul(S,diag_M/sigma))
+
+        trace = tf.reduce_sum(tf.linalg.trace(LSL)) 
+        
+        const = 0.5*to_default_float(num_inducing)*np.log(2*np.pi)
+
+        det1 = tf.reduce_sum(tf.math.log(tf.linalg.diag_part(LA)))
+        det2 = tf.reduce_sum(tf.math.log(tf.linalg.diag_part(L)))
+
+        return quad - C - trace - det1 + det2 + const
 
     @inherit_check_shapes
     def maximum_log_likelihood_objective(self) -> tf.Tensor:  # type: ignore[override]
-        return 0
+        return self.elbo()
 
     
     def predict_f(
