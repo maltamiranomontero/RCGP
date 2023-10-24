@@ -1,0 +1,23 @@
+{
+    "suite_name": "asymmetric",
+    "argv": [
+        "/Users/matiasaltamiranomontero/Documents/Robust_GP/experiments/UCI/run.py",
+        "asymmetric",
+        "experiments/UCI/experiment_results"
+    ],
+    "user": "matiasaltamiranomontero",
+    "hostname": "Matiass-MBP",
+    "timestamp": "20231014_222319.777077",
+    "py_ver": "3.10.11",
+    "tf_ver": "2.13.0",
+    "np_ver": "1.26.0",
+    "ram": 17179869184,
+    "cpu_name": "Apple M2 Pro",
+    "cpu_count": 12,
+    "gpu_names": [
+        "METAL"
+    ],
+    "git_branch_name": "main",
+    "git_commit": "37fc76e6fee363497d6da45c1ddd6ed87b22fdea + uncomitted changes",
+    "run_id": "run_asymmetric_main_20231014_222319.777077"
+}
