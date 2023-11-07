@@ -7,7 +7,6 @@ from check_shapes import check_shapes, inherit_check_shapes
 
 import gpflow
 
-from gpflow import posteriors
 from gpflow.base import InputData, MeanAndVariance, RegressionData, TensorData
 from gpflow.kernels import Kernel
 from gpflow.likelihoods import Gaussian
@@ -24,7 +23,11 @@ from rcgp.utils import add_likelihood_noise_cov
 
 
 class RCGPR(GPModel, InternalDataTrainingLossMixin):
-
+    """
+    Robust and Conjugate Gaussian Process Regression
+    This method only works with a Gaussian likelihood, its variance is
+    initialized to `noise_variance`.
+    """
     @check_shapes(
         "data[0]: [N, D]",
         "data[1]: [N, P]",
@@ -51,9 +54,8 @@ class RCGPR(GPModel, InternalDataTrainingLossMixin):
         self.data = data_input_to_tensor(data)
         self.weighting_function = weighting_function
 
-    # type-ignore is because of changed method signature:
     @inherit_check_shapes
-    def maximum_log_likelihood_objective(self) -> tf.Tensor:  # type: ignore[override]
+    def maximum_log_likelihood_objective(self) -> tf.Tensor:
         return self.loo_cv()
 
     @check_shapes(
@@ -91,43 +93,9 @@ class RCGPR(GPModel, InternalDataTrainingLossMixin):
 
         return tf.reduce_sum(tf.linalg.matmul(A, B, transpose_a=True))/2 - C - D
 
-    def in_sample(self) -> tf.Tensor:
-
-        X, Y = self.data
-        K = self.kernel(X)
-        n = tf.cast(tf.shape(X)[0], K.dtype)
-        W = self.weighting_function.W(X, Y)
-        W_dy = self.weighting_function.dy(X, Y)
-
-        likelihood_variance = self.likelihood.variance_at(X)
-
-        K_plus_sW = add_likelihood_noise_cov(K, W, self.likelihood, X)
-        L_plus_sW = tf.linalg.cholesky(K_plus_sW + tf.eye(n, dtype=default_float()) * 1e-04)
-
-        A = tf.linalg.triangular_solve(L_plus_sW, K, lower=True)
-        B = tf.linalg.triangular_solve(L_plus_sW, tf.linalg.diag(tf.squeeze(likelihood_variance*(W**-2), axis=-1)), lower=True)
-
-        f = Y - 2*likelihood_variance*W_dy/W
-        C = tf.linalg.triangular_solve(L_plus_sW, f, lower=True)
-
-        Sigma = tf.matmul(A, B, transpose_a=True)
-        mu = tf.matmul(A, C, transpose_a=True)
-
-        Sigma_s = Sigma + tf.linalg.diag(tf.squeeze(likelihood_variance, axis=-1))
-
-        L_s = tf.linalg.cholesky(Sigma_s + tf.eye(n, dtype=default_float()) * 1e-04)
-
-        D = tf.linalg.triangular_solve(L_s, Y-mu, lower=True)
-
-        lm = - 0.5*tf.reduce_sum(tf.square(D))
-        lm -= 0.5 * n * np.log(2 * np.pi)
-        lm -= tf.reduce_sum(tf.math.log(tf.linalg.diag_part(L_s)))
-
-        return tf.reduce_sum(lm)
-
     def loo_cv(self) -> tf.Tensor:
         r"""
-        Computes the leave one out
+        Computes the leave one out to train the model
         """
         X, Y = self.data
         K = self.kernel(X)
@@ -144,7 +112,7 @@ class RCGPR(GPModel, InternalDataTrainingLossMixin):
 
         diag_K_sW_inv = tf.reshape(tf.linalg.diag_part(K_sW_inv), (-1, 1))
 
-        A = diag_K_sW_inv*(Y - self.mean_function(X) -Y_bar)
+        A = diag_K_sW_inv*(Y - self.mean_function(X) - Y_bar)
         B = tf.matmul(K_sW_inv, Y_bar)
 
         C = diag_K_sW_inv * (1-diag_K_sW_inv*(likelihood_variance*(W**-2) - likelihood_variance))
@@ -222,7 +190,11 @@ class RCGPR(GPModel, InternalDataTrainingLossMixin):
 
 
 class RCSGPR(GPModel, InternalDataTrainingLossMixin):
-
+    """
+    Robust and Conjugate Sparse Gaussian Process Regression
+    This method only works with a Gaussian likelihood, its variance is
+    initialized to `noise_variance`.
+    """
     def __init__(
         self,
         data: RegressionData,
@@ -319,7 +291,7 @@ class RCSGPR(GPModel, InternalDataTrainingLossMixin):
         kuf = Kuf(self.inducing_variable, self.kernel, X_data)
         kuu = Kuu(self.inducing_variable, self.kernel, jitter=default_jitter())
         Kus = Kuf(self.inducing_variable, self.kernel, Xnew)
-        
+
         W = self.weighting_function.W(X_data, err)
         W_dy = self.weighting_function.dy(X_data, err)
 
