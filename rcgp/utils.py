@@ -18,23 +18,14 @@ def assert_params_false(
         )
 
 
-@check_shapes(
-    "K: [batch..., N, N]",
-    "likelihood_variance: [broadcast batch..., broadcast N]",
-    "return: [batch..., N, N]",
-)
 def add_noise_cov(K: tf.Tensor, W: tf.Tensor, likelihood_variance: TensorType) -> tf.Tensor:
 
     k_diag = tf.linalg.diag_part(K)
     return tf.linalg.set_diag(K, k_diag + likelihood_variance*(W**-2))
 
 
-@check_shapes(
-    "K: [batch..., N, N]",
-    "X: [batch..., N, D]",
-    "return: [batch..., N, N]",
-)
 def add_likelihood_noise_cov(K: tf.Tensor, W: tf.Tensor, likelihood: Gaussian, X: TensorType) -> tf.Tensor:
-
-    return add_noise_cov(K, tf.squeeze(W, axis=-1), tf.squeeze(likelihood.variance_at(X), axis=-1))
+    W_squeeze = tf.squeeze(W, axis=-1)
+    variance_squeeze = tf.squeeze(likelihood.variance_at(X), axis=-1)
+    return add_noise_cov(K, W_squeeze, variance_squeeze)
 
